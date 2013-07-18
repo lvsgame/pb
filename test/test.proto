@@ -1,0 +1,32 @@
+
+// hero attribute
+message Attribute {
+    required uint32 hp = 1;
+    required uint32 mp = 2;
+    required uint32 power = 3;
+    repeated float box[max=10] = 4;
+}
+
+// hero equip
+message Equip {
+    required uint32 head = 1;
+    required uint32 hand = 2;
+};
+
+// hero
+message Hero {
+    required string name[32] = 1;
+    required uint32 id = 2;
+    repeated Attribute attris[max=10] = 3;
+    required Equip equip = 4;
+}
+/*
+message Repeat {
+    required uint32 a=1;
+}
+*/
+enum Camp {
+    Camp_1 = 1;
+    Camp_2 = 2;
+    Camp_Max;
+}
