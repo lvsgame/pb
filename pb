@@ -1,4 +1,4 @@
-pb=/home/lvxiaojun/pb CD=. filter="*" {
+pb=~/pb CD=. filter="*" {
  Makefile
  pb
  src=src {
