@@ -1,6 +1,6 @@
 .PHONY: all test pb clean
 
-CFLAGS = -g -Wall
+CFLAGS = -Werror -O2
 SHARED = -fPIC -shared
 
 all : \
@@ -22,7 +22,7 @@ test/pb_init.h : $(PROTOD)
 	cd tool && lua protoc.lua ../test ../test ../$@
 
 build/test: test/pb_init.h $(PROTOH) test/test.c 
-	gcc $(CFLAGS) -o $@ $^ -lpb -L./build -I./src
+	gcc $(CFLAGS) -o $@ $^ -lrt -lpb -L./build -I./src
 
 clean:
 	rm -rf build test/pb_init.h
