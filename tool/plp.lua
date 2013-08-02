@@ -230,7 +230,7 @@ local function _dump_field(field)
     end
 end
 
-local function dump_block(blocktable, name) 
+local function _dump_block(blocktable, name) 
     _dump_instruction()
     io.write(string.format('#ifndef __pb_%s_h__\n', name))
     io.write(string.format('#define __pb_%s_h__\n\n', name))
@@ -353,7 +353,7 @@ local function _dump_includes(defines)
         io.write(string.format('#include "%s.h"\n', def))
     end
 end
-local function dump_context(blocktable, defines) 
+local function _dump_context(blocktable, defines) 
     _dump_instruction()
     _dump_includes(defines)
     io.write("\n")
@@ -445,7 +445,7 @@ function plp.dump(block, name, out)
     if out then
         io.output(out)
     end
-    dump_block(block, name)
+    _dump_block(block, name)
     io.output(old_output)
 end
 function plp.dump_context(blocktable, defines, out)
@@ -453,7 +453,7 @@ function plp.dump_context(blocktable, defines, out)
     if out then
         io.output(out)
     end
-    dump_context(blocktable, defines)
+    _dump_context(blocktable, defines)
     io.output(old_output)
 end
 return plp

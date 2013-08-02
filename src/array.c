@@ -35,7 +35,7 @@ _grow(struct array* self, size_t cap) {
     while (self->cap < cap)
         self->cap *= 2;
     self->elems = realloc(self->elems, sizeof(void*) * self->cap);
-    memset((char*)self->elems + sizeof(void*) * old_cap,  0, sizeof(void*) * (self->cap - old_cap));
+    memset(self->elems + old_cap,  0, sizeof(void*) * (self->cap - old_cap));
 }
 
 void 
