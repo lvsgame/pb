@@ -1,5 +1,6 @@
 pb=~/pb CD=. filter="*" {
  Makefile
+ README.md
  pb
  src=src {
   map.c
@@ -11,9 +12,8 @@ pb=~/pb CD=. filter="*" {
  test=test {
   test.c
   test.proto
-  pb_init.h
   pb_log.h
-  test.h
+  test.pb.h
  }
  tool=tool {
   lfs.so
