@@ -2,7 +2,6 @@ pb=~/pb CD=. filter="*" {
  Makefile
  pb
  src=src {
-  array.c
   map.c
   pb.c
   array.h

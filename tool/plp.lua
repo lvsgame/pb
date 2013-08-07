@@ -205,6 +205,15 @@ local function _dump_instruction()
     io.write('/*this file is generate by protoc.lua do not change it by hand*/\n\n')
 end
 
+local function _dump_h_header(outname)
+    io.write(string.format("#ifndef __%s_H__\n", string.upper(outname)))
+    io.write(string.format("#define __%s_H__\n\n", string.upper(outname)))
+end
+
+local function _dump_h_tail()
+    io.write(string.format("#endif"))
+end
+
 local function _dump_field(field) 
     if field.sign == "comment" then
         io.write(field.value)
@@ -232,12 +241,11 @@ end
 
 local function _dump_block(blocktable, name) 
     _dump_instruction()
-    io.write(string.format('#ifndef __pb_%s_h__\n', name))
-    io.write(string.format('#define __pb_%s_h__\n\n', name))
+    _dump_h_header(string.format(string.upper(name).."_PB"))
     io.write('#include <stdint.h>\n\n')
     for _, block in ipairs(blocktable) do
         if block.sign == "import" then
-            io.write(string.format('#include "%s.h"', block.name))
+            io.write(string.format('#include "%s.pb.h"', block.name))
         elseif block.sign == "comment" then
             io.write(string.format(block.name))
         elseif block.sign == "message" then
@@ -254,7 +262,7 @@ local function _dump_block(blocktable, name)
             io.write("};")
         end
     end
-    io.write(string.format('\n#endif'))
+    _dump_h_tail()
 end
 
 local function _serialize_field_decl(mname, field, blocktable) 
@@ -312,14 +320,20 @@ local function _dump_mfields(m, blocktable)
     end
 end
 
+local function _pbo_name(name)
+    return string.format("PBO_%s", string.upper(name))
+end
+
 local function _dump_message(m, n, blocktable)
     io.write(string.format(
              "    struct pb_field_decl fds%d[] = {\n", n))
     _dump_mfields(m, blocktable)
     io.write("    };\n")
     io.write(string.format(
-             '    if (pb_context_object(pbc, "%s", fds%d, sizeof(fds%d)/sizeof(fds%d[0]))) {\n', 
-                                              m.name, n, n, n))
+             '    %s = pb_context_object(pbc, "%s", fds%d, sizeof(fds%d)/sizeof(fds%d[0]));\n', 
+                                              _pbo_name(m.name), m.name, n, n, n))
+    io.write(string.format(
+            "    if (%s == NULL) {\n", _pbo_name(m.name)))
     io.write('        PB_LOG("pb object error: %s", pb_context_lasterror(pbc));\n')
     io.write("        pb_context_delete(pbc);\n")
     io.write("        return NULL;\n")
@@ -350,13 +364,23 @@ local function _dump_includes(defines)
     io.write('#include "pb.h"\n')
     io.write('#include "pb_log.h"\n')
     for _, def in ipairs(defines) do
-        io.write(string.format('#include "%s.h"\n', def))
+        io.write(string.format('#include "%s.pb.h"\n', def))
     end
-end
-local function _dump_context(blocktable, defines) 
-    _dump_instruction()
-    _dump_includes(defines)
     io.write("\n")
+end
+local function _dump_pbobject_decl(blocktable)
+    for _, b in ipairs(blocktable) do
+        if b.sign == "message" then
+            io.write(string.format("struct pb_object* %s = NULL;\n", _pbo_name(b.name)))
+        end
+    end
+    io.write("\n")
+end
+local function _dump_context(blocktable, defines, outname) 
+    _dump_instruction()
+    _dump_h_header(outname)
+    _dump_includes(defines)
+    _dump_pbobject_decl(blocktable) 
     local nmessage = _get_messagecount(blocktable)
     io.write("struct pb_context*\n")
     io.write("PB_CONTEXT_INIT() {\n")
@@ -372,7 +396,8 @@ local function _dump_context(blocktable, defines)
     io.write("        return NULL;\n")
     io.write("    }\n")
     io.write("    return pbc;\n");
-    io.write("}\n");
+    io.write("}\n\n");
+    _dump_h_tail();
 end
 
 -------------------------------------------------------------------------------
@@ -448,12 +473,12 @@ function plp.dump(block, name, out)
     _dump_block(block, name)
     io.output(old_output)
 end
-function plp.dump_context(blocktable, defines, out)
+function plp.dump_context(blocktable, defines, out, outname)
     local old_output = io.output()
     if out then
         io.output(out)
     end
-    _dump_context(blocktable, defines)
+    _dump_context(blocktable, defines, outname)
     io.output(old_output)
 end
 return plp

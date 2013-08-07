@@ -6,8 +6,9 @@
 
 struct pb_slice {
     size_t size;
-    size_t cur;
     char* pointer;
+    char* cur;
+    char* end;
 };
 
 struct pb_field_decl {
@@ -21,19 +22,18 @@ struct pb_field_decl {
 };
 
 struct pb_context;
+struct pb_object;
 
 struct pb_context* pb_context_new(size_t object_max);
 void pb_context_delete(struct pb_context* pbc);
-int pb_context_object(struct pb_context* pbc, const char* name, 
-        struct pb_field_decl* fds, size_t n);
 void pb_context_fresh(struct pb_context* pbc);
 int pb_context_verify(struct pb_context* pbc);
-int pb_context_seri(struct pb_context* pbc, const char* name, 
-        struct pb_slice* c, struct pb_slice* seri);
-int pb_context_unseri(struct pb_context* pbc, const char* name,
-        struct pb_slice* seri, struct pb_slice* c);
+int pb_context_seri(struct pb_context* pbc, struct pb_object* o, struct pb_slice* c, struct pb_slice* seri);
+int pb_context_unseri(struct pb_context* pbc, struct pb_object* o, struct pb_slice* seri, struct pb_slice* c);
 const char* pb_context_lasterror(struct pb_context* pbc);
 void pb_context_dump(struct pb_context* pbc);
 
+struct pb_object* pb_context_object(struct pb_context* pbc, const char* name, struct pb_field_decl* fds, size_t n);
+struct pb_object* pb_context_objectget(struct pb_context* pbc, const char* name);
 
 #endif

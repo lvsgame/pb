@@ -85,18 +85,18 @@ struct _field {
     int ctype;
     int wtype;
     int label;
-    struct _object* child;
+    struct pb_object* child;
 };
 
-struct _object {
+struct pb_object {
     const char* name;
     struct array* fields;
 };
 
 inline static size_t
-_varint_encode(uint64_t var, char buffer[8]) {
+_varint_encode(uint64_t var, char* buffer, size_t space) {
     size_t i;
-    for (i=0; i<8; ++i) {
+    for (i=0; i<space; ++i) {
         buffer[i] = (uint8_t)(var&0x7f);
         var >>= 7;
         if (var)
@@ -108,11 +108,10 @@ _varint_encode(uint64_t var, char buffer[8]) {
 }
 
 inline static size_t 
-_varint_decode(char* buffer, size_t n, uint64_t* var) {
-    if (n > 8) n = 8;
+_varint_decode(char* buffer, size_t space, uint64_t* var) {
     *var = 0;
     size_t i;
-    for (i=0; i<n; ++i) {
+    for (i=0; i<space; ++i) {
         *var |= ((uint64_t)buffer[i]&0x7f) << (i*7);
         if ((buffer[i] & 0x80) == 0)
             break;
@@ -120,38 +119,41 @@ _varint_decode(char* buffer, size_t n, uint64_t* var) {
     return i+1;
 }
 
+static inline void
+_slice_init(struct pb_slice* s) {
+    s->cur = s->pointer;
+    s->end = s->pointer + s->size;
+}
+
 inline static int
 _slice_write(struct pb_slice* s, void* p, int size) {
-    if (s->cur + size > s->size)
+    if (s->cur + size > s->end)
         return 1;
-    memcpy(s->pointer + s->cur, p, size);
+    memcpy(s->cur, p, size);
     return 0;
 }
 
 inline static int
 _slice_checkforward(struct pb_slice* s, int size) {
-    return s->cur + size <= s->size ? 0 : 1;
+    return s->cur + size > s->end;
 }
 
 static inline int
 _pack_tag(struct _field* f, struct pb_slice* seri) {
-    size_t n = 0;
-    char buffer[2];
-    if (f->number < 0) {
-        return PB_ERR_NUMBER;
-    } else if (f->number < 16) {
+    assert(f->number >= 0 &&  f->number <= FIELD_NUMBER_MAX);
+    char* buffer = seri->cur;
+    if (f->number < 16) {
+        if (_slice_checkforward(seri, 1))
+            return PB_ERR_NO_WBUFFER;
         buffer[0] = (f->number<<3) | f->wtype;
-        n = 1;
-    } else if (f->number < 4096) {
+        seri->cur++;
+    } else {
+        if (_slice_checkforward(seri, 2))
+            return PB_ERR_NO_WBUFFER;
         buffer[0] = (f->number<<3) | f->wtype | 0x80;
         buffer[1] = (f->number>>4);
-        n = 2;
-    } else {
-        return PB_ERR_NUMBER;
+        seri->cur+=2;
     }
-    if (_slice_write(seri, &buffer, n))
-        return PB_ERR_NO_WBUFFER;
-    seri->cur += n;
     return PB_OK;
 }
 
@@ -159,7 +161,7 @@ static inline int
 _unpack_tag(struct pb_slice* seri, int* number, int* wtype) {
     if (_slice_checkforward(seri, 1))
         return PB_ERR_NO_RBUFFER;
-    char* buffer = seri->pointer+seri->cur;
+    char* buffer = seri->cur;
     *wtype = buffer[0] & 0x07;
     *number = (buffer[0] & 0x78) >> 3;
     if (buffer[0] & 0x80) {
@@ -177,22 +179,46 @@ _pack_varint(struct _field* f, struct pb_slice* c, struct pb_slice* seri) {
     assert(f->bytes <= 8);
     if (_slice_checkforward(c, f->bytes))
         return PB_ERR_NO_RBUFFER;
+    char* cptr = c->cur;
     uint64_t var = 0;
-    memcpy(&var, c->pointer+c->cur, f->bytes);
+    size_t space;
+    switch (f->bytes) {
+    case 1:
+        var = *(uint8_t*)cptr;
+        space = 2;
+        break;
+    case 2:
+        var = *(uint16_t*)cptr;
+        space = 3;
+        break;
+    case 4:
+        var = *(uint32_t*)cptr;
+        space = 5;
+        break;
+    case 8:
+        var = *(uint64_t*)cptr;
+        space = 8;
+        break;
+    default:
+        return PB_ERR_VARINT;
+    }
     switch (f->ctype) {
     case CT_INT32:
-        var = ((int32_t)var<<1) ^ ((int32_t)var>>31);
+        var = ((int32_t)var<<1)^((int32_t)var>>31);
         break;
     case CT_INT64:
-        var = ((int64_t)var<<1) ^ ((int64_t)var>>63);
+        var = ((int64_t)var<<1)^((int64_t)var>>63);
         break;
     default:
         break;
     }
-    char buffer[8];
-    size_t n = _varint_encode(var, buffer);
-    if (_slice_write(seri, buffer, n))
+    
+    if (_slice_checkforward(seri, space))
         return PB_ERR_NO_WBUFFER;
+    char* buffer = seri->cur;
+    size_t n = _varint_encode(var, buffer, space);
+    if (n > space)
+        return PB_ERR_VARINT;
     seri->cur += n;
     return PB_OK;
 }
@@ -200,10 +226,11 @@ _pack_varint(struct _field* f, struct pb_slice* c, struct pb_slice* seri) {
 inline static int
 _unpack_varint(struct _field* f, struct pb_slice* seri, struct pb_slice* c) {
     assert(f->bytes <= 8);
-    size_t n = seri->size - seri->cur;
+    size_t n = seri->end - seri->cur;
     if (n == 0)
         return PB_ERR_NO_RBUFFER;
-    char* buffer = seri->pointer + seri->cur;
+    if (n > 8) n = 8; 
+    char* buffer = seri->cur;
     uint64_t var;
     n = _varint_decode(buffer, n, &var);
     if (n > f->bytes)
@@ -216,8 +243,27 @@ _unpack_varint(struct _field* f, struct pb_slice* seri, struct pb_slice* c) {
     default:
         break;
     }
-    if (_slice_write(c, &var, f->bytes))
+
+    if (_slice_checkforward(c, f->bytes))
         return PB_ERR_NO_WBUFFER;
+
+    char* cptr = c->cur;
+    switch (f->bytes) {
+    case 1:
+        *(uint8_t*)cptr = (uint8_t)var;
+        break;
+    case 2:
+        *(uint16_t*)cptr = (uint16_t)var;
+        break;
+    case 4:
+        *(uint32_t*)cptr = (uint32_t)var;
+        break;
+    case 8:
+        *(uint64_t*)cptr = (uint64_t)var;
+        break;
+    default:
+        return PB_ERR_VARINT;
+    }
     seri->cur += n;
     return PB_OK;
 }
@@ -226,7 +272,7 @@ inline static int
 _pack_bytes(size_t bytes, struct pb_slice* c, struct pb_slice* seri) {
     if (_slice_checkforward(c, bytes))
         return PB_ERR_NO_RBUFFER;
-    if (_slice_write(seri, c->pointer + c->cur, bytes))
+    if (_slice_write(seri, c->cur, bytes))
         return PB_ERR_NO_WBUFFER;
     seri->cur += bytes;
     return PB_OK;
@@ -236,24 +282,24 @@ inline static int
 _unpack_bytes(size_t bytes, struct pb_slice* seri, struct pb_slice* c) {
     if (_slice_checkforward(seri, bytes))
         return PB_ERR_NO_RBUFFER;
-    if (_slice_write(c, seri->pointer+seri->cur, bytes))
+    if (_slice_write(c, seri->cur, bytes))
         return PB_ERR_NO_WBUFFER;
     seri->cur += bytes;
     return PB_OK;
 }
 
-#define CHECK(f) r = f; if (r) return r;
+#define CHECK(f) if (r=f) return r;
 
 inline static int
-_pack_object(struct _object* o, struct pb_slice* c, struct pb_slice* seri);
+_pack_object(struct pb_object* o, struct pb_slice* c, struct pb_slice* seri);
 
 inline static int
 _pack_lend(struct _field* f, struct pb_slice* c, struct pb_slice* seri) {
     uint16_t repeat;
     if (f->repeat_offset > 0) {
-        int offset = c->cur - f->repeat_offset;
-        assert(f->repeat_offset >= 0);
-        repeat = *(uint16_t*)(c->pointer + offset);
+        char* repeatptr = c->cur - f->repeat_offset;
+        assert(repeatptr >= c->pointer);
+        repeat = *(uint16_t*)repeatptr;
     } else {
         repeat = f->repeat_max;
     }
@@ -262,10 +308,10 @@ _pack_lend(struct _field* f, struct pb_slice* c, struct pb_slice* seri) {
         return PB_ERR_NO_WBUFFER;
     }
 
-    uint16_t* bytesptr = (uint16_t*)(seri->pointer+seri->cur);
+    uint16_t* bytesptr = (uint16_t*)(seri->cur);
     seri->cur += 2;
 
-    int begin = seri->cur;
+    char* begin = seri->cur;
     int r;
     size_t i;
     switch (f->ctype) {
@@ -289,20 +335,20 @@ _pack_lend(struct _field* f, struct pb_slice* c, struct pb_slice* seri) {
             c->cur += f->bytes;
         }
         break;
-    case CT_FLOAT:
+    case CT_FLOAT: {
         assert(f->bytes == 4);
-        for (i=0; i<repeat; ++i) {
-            CHECK(_pack_bytes(f->bytes, c, seri));
-            c->cur += f->bytes;
-        }
+        int bytes = f->bytes * repeat;
+        CHECK(_pack_bytes(bytes, c, seri));
+        c->cur += bytes;
         break;
-    case CT_DOUBLE:
+    }
+    case CT_DOUBLE: {
         assert(f->bytes == 8);
-        for (i=0; i<repeat; ++i) {
-            CHECK(_pack_bytes(f->bytes, c, seri));
-            c->cur += f->bytes;
-        }
+        int bytes = f->bytes * repeat;
+        CHECK(_pack_bytes(bytes, c, seri));
+        c->cur += bytes;
         break;
+    }
     case CT_OBJECT:
         for (i=0; i<repeat; ++i) {
             CHECK(_pack_object(f->child, c, seri));
@@ -322,7 +368,7 @@ _pack_field(struct _field* f, struct pb_slice* c, struct pb_slice* seri) {
     int r;
     CHECK(_pack_tag(f, seri));
     
-    int parent = c->cur;
+    char* parent = c->cur;
     c->cur += f->offset;
  
     switch (f->wtype) {
@@ -349,7 +395,7 @@ _pack_field(struct _field* f, struct pb_slice* c, struct pb_slice* seri) {
 }
 
 inline static int
-_pack_object(struct _object* o, struct pb_slice* c, struct pb_slice* seri) {
+_pack_object(struct pb_object* o, struct pb_slice* c, struct pb_slice* seri) {
     int r;
     size_t i;
     for (i=0; i<array_size(o->fields); ++i) {
@@ -362,7 +408,7 @@ _pack_object(struct _object* o, struct pb_slice* c, struct pb_slice* seri) {
 }
 
 inline static int
-_unpack_object(struct _object* o, struct pb_slice* seri, struct pb_slice* c);
+_unpack_object(struct pb_object* o, struct pb_slice* seri, struct pb_slice* c);
 
 inline static int
 _unpack_lend(struct _field* f, struct pb_slice* seri, struct pb_slice* c) {
@@ -370,13 +416,16 @@ _unpack_lend(struct _field* f, struct pb_slice* seri, struct pb_slice* c) {
     if (_slice_checkforward(seri, 2))
         return PB_ERR_NO_RBUFFER;
 
-    uint16_t* repeatptr = (uint16_t*)(c->pointer + c->cur - f->repeat_offset);
-    uint16_t bytes = *(uint16_t*)(seri->pointer + seri->cur);
+    char* repeatptr = c->cur - f->repeat_offset;
+    assert(repeatptr >= c->pointer);
+    
+    uint16_t bytes = *(uint16_t*)(seri->cur);
     seri->cur += 2;
-    if (bytes + seri->cur > seri->size)
+
+    char* end = seri->cur + bytes;
+    if (end > seri->end)
         return PB_ERR_NO_RBUFFER;
     
-    size_t end = seri->cur + bytes;
     size_t repeat = 0;
 
     switch (f->ctype) {
@@ -390,7 +439,7 @@ _unpack_lend(struct _field* f, struct pb_slice* seri, struct pb_slice* c) {
         assert(f->bytes == 1);
         CHECK(_unpack_bytes(bytes, seri, c));
         c->cur += bytes;
-        c->pointer[c->cur-1] = '\0';
+        *(c->cur-1) = '\0';
         repeat = bytes;
         break;
     case CT_BOOL:
@@ -423,14 +472,14 @@ _unpack_lend(struct _field* f, struct pb_slice* seri, struct pb_slice* c) {
         repeat = bytes/8;
         break;
     case CT_OBJECT: {
-        size_t bak_size = seri->size;
-        seri->size = end;
+        char* bak_end = seri->end;
+        seri->end = end;
         while (seri->cur < end) {
             CHECK(_unpack_object(f->child, seri, c)); 
             c->cur += f->bytes;
             repeat += 1;
         }
-        seri->size = bak_size;
+        seri->end = bak_end;
         break;
     }
     default:
@@ -439,7 +488,7 @@ _unpack_lend(struct _field* f, struct pb_slice* seri, struct pb_slice* c) {
     if (f->repeat_offset > 0) {
         if (repeat > f->repeat_max)
             return PB_ERR_REPEAT;
-        *repeatptr = repeat;
+        *(uint16_t*)repeatptr = repeat;
     } else {
         if (repeat != f->repeat_max)
             return PB_ERR_REPEAT;
@@ -450,7 +499,7 @@ _unpack_lend(struct _field* f, struct pb_slice* seri, struct pb_slice* c) {
 inline static int
 _unpack_field(struct _field* f, struct pb_slice* seri, struct pb_slice* c) {
     int r;
-    int parent = c->cur;
+    char* parent = c->cur;
     c->cur += f->offset;
 
     switch (f->wtype) {
@@ -480,10 +529,10 @@ inline static int
 _skip_field(int wtype, struct pb_slice* seri) {
     switch (wtype) {
     case WT_VARINT: {
-        size_t n = seri->size - seri->cur;
+        size_t n = seri->end - seri->cur;
         if (n == 0)
             return PB_ERR_NO_RBUFFER;
-        char* buffer = seri->pointer + seri->cur;
+        char* buffer = seri->cur;
         uint64_t var;
         n = _varint_decode(buffer, n, &var);
         if (n > 8)
@@ -498,9 +547,9 @@ _skip_field(int wtype, struct pb_slice* seri) {
     case WT_LEND: {
         if (_slice_checkforward(seri, 2))
             return PB_ERR_NO_RBUFFER;
-        uint16_t bytes = *(uint16_t*)(seri->pointer+seri->cur);
+        uint16_t bytes = *(uint16_t*)(seri->cur);
         seri->cur += 2;
-        if (bytes + seri->cur > seri->size)
+        if (bytes + seri->cur > seri->end)
             return PB_ERR_NO_RBUFFER;
         seri->cur += bytes;
     }
@@ -511,11 +560,11 @@ _skip_field(int wtype, struct pb_slice* seri) {
 }
 
 inline static int
-_unpack_object(struct _object* o, struct pb_slice* seri, struct pb_slice* c) {
+_unpack_object(struct pb_object* o, struct pb_slice* seri, struct pb_slice* c) {
     int r; 
     int number;
     int wtype;
-    int oldpos;
+    char* oldpos;
     int wrap_number = -1;
 _next:
     oldpos = seri->cur;
@@ -662,7 +711,7 @@ _delete_field(struct _field* f) {
     }
 }
 
-#define CHECK_ERR(f) *error = f; if (*error) goto err;
+#define CHECK_ERR(f) if (*error=f) goto err;
 
 struct _field*
 _new_field(struct pb_field_decl* fd, int* error) {
@@ -690,7 +739,7 @@ err:
 }
 
 static void
-_delete_object(struct _object* o) {
+_delete_object(struct pb_object* o) {
     if (o == NULL) return;
     size_t i;
     for (i=0; i<array_size(o->fields); ++i) {
@@ -701,9 +750,9 @@ _delete_object(struct _object* o) {
 }
 
 
-struct _object*
+struct pb_object*
 _new_object(const char* name, struct pb_field_decl* fds, size_t n, int* error) {
-    struct _object* o = malloc(sizeof(*o));
+    struct pb_object* o = malloc(sizeof(*o));
     o->name = strdup(name);
     o->fields = array_new(n);
 
@@ -739,7 +788,7 @@ pb_context_new(size_t object_max) {
 
 static void
 _delete_cb(const char* key, void* value, void* ud) {
-    struct _object* o = value;
+    struct pb_object* o = value;
     _delete_object(o);
 }
 
@@ -762,24 +811,24 @@ _set_error(struct pb_context* pbc, const char* fmt, ...) {
     va_end(ap);
 }
 
-int
+struct pb_object*
 pb_context_object(struct pb_context* pbc, const char* name, 
         struct pb_field_decl* fds, size_t n) {
     int error;
-    struct _object* o = _new_object(name, fds, n, &error);
+    struct pb_object* o = _new_object(name, fds, n, &error);
     if (o) {
         map_insert(pbc->objects, o->name, o);
-        return 0;
+        return o;
     } else {
         _set_error(pbc, _str_error(error));
-        return 1;
+        return NULL;
     }
 }
 
 static void
 _fresh_cb(const char* key, void* value, void* ud) {
     struct pb_context* pbc = ud;
-    struct _object* o = value;
+    struct pb_object* o = value;
     size_t i;
     for (i=0; i<array_size(o->fields); ++i) {
         struct _field* f = array_get(o->fields, i);
@@ -798,7 +847,7 @@ pb_context_fresh(struct pb_context* pbc) {
 }
 
 int
-_verify_object(struct pb_context* pbc, struct _object* o, int depth) {
+_verify_object(struct pb_context* pbc, struct pb_object* o, int depth) {
     if (depth > 10) {
         _set_error(pbc, "object too depth");
         return 1;
@@ -824,7 +873,7 @@ _verify_object(struct pb_context* pbc, struct _object* o, int depth) {
 static int
 _verify_cb(const char* key, void* value, void* ud) {
     struct pb_context* pbc = ud;
-    struct _object* o = value;
+    struct pb_object* o = value;
     return _verify_object(pbc, o, 1);
 }
 
@@ -833,14 +882,16 @@ pb_context_verify(struct pb_context* pbc) {
     return map_foreach_check(pbc->objects, _verify_cb, pbc);
 }
 
+struct pb_object* 
+pb_object_get(struct pb_context* pbc, const char* name) {
+    return map_find(pbc->objects, name);
+}
+
 int
-pb_context_seri(struct pb_context* pbc, const char* name, 
+pb_context_seri(struct pb_context* pbc, struct pb_object* o, 
         struct pb_slice* c, struct pb_slice* seri) {
-    struct _object* o = map_find(pbc->objects, name);
-    if (o == NULL) {
-        _set_error(pbc, "not found object:%s", name);
-        return 1;
-    }
+    _slice_init(seri);
+    _slice_init(c);
     int error = _pack_object(o, c, seri);
     if (error) {
         _set_error(pbc, _str_error(error));
@@ -850,25 +901,21 @@ pb_context_seri(struct pb_context* pbc, const char* name,
 }
 
 int 
-pb_context_unseri(struct pb_context* pbc, const char* name,
+pb_context_unseri(struct pb_context* pbc, struct pb_object* o,
         struct pb_slice* seri, struct pb_slice* c) {
-    struct _object* o = map_find(pbc->objects, name);
-    if (o == NULL) {
-        _set_error(pbc, "not found object:%s", name);
-        return 1;
-    }
+    _slice_init(seri);
+    _slice_init(c);
     int error = _unpack_object(o, seri, c);
     if (error) {
         _set_error(pbc, _str_error(error));
         return 1;
     }
     return 0;
-
 }
 
 static void
 _dump_cb(const char* key, void* value, void* ud) {
-    struct _object* o = value;
+    struct pb_object* o = value;
     printf("message %s {\n", o->name);
     size_t i;
     for (i=0; i<array_size(o->fields); ++i) {

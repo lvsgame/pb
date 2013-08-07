@@ -35,9 +35,8 @@ for _, f in ipairs(files) do
     local blocktable = plp.block_new()
     assert(plp.parse_file(f, blocktable))
  
-    local _, _, _, outfile = string.find(f,'(.-)([^\\/]*)$')
-    local define = string.sub(outfile, 1, -7)
-    outfile = string.format("%s/%s.h", outdir, define)
+    local _, _, _, define = string.find(f,'(.-)([^\\/]*).proto$')
+    outfile = string.format("%s/%s.pb.h", outdir, define)
     local out = io.open(outfile, "w")
     plp.dump(blocktable, define, out) 
     out:close()
@@ -48,7 +47,9 @@ for _, f in ipairs(files) do
     full_define[#full_define+1] = define
 end
 
-local out = io.open(args[3], "w")
-plp.dump_context(full_blocktable, full_define, out)
+local outfile = args[3]
+local _, _, _, outname = string.find(outfile,'(.-)([^\\/]*).h$')
+local out = io.open(outfile, "w")
+plp.dump_context(full_blocktable, full_define, out, outname)
 out:close()
 

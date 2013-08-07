@@ -12,11 +12,11 @@ build :
 
 pb : test/pb_init.h
 
-build/libpb.so: src/pb.c src/array.c src/map.c | build
+build/libpb.so: src/pb.c src/pb.h src/array.h src/map.c src/map.h | build
 	gcc $(CFLAGS) $(SHARED) -o $@ $^
 
 PROTOD = $(wildcard test/*.proto)
-PROTOH = $(PROTOD:%.proto=%.h)
+PROTOH = $(PROTOD:%.proto=%.pb.h)
 
 test/pb_init.h : $(PROTOD)
 	cd tool && lua protoc.lua ../test ../test ../$@

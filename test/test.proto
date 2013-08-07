@@ -20,6 +20,19 @@ message Hero {
     repeated Attribute attris[max=10] = 3;
     required Equip equip = 4;
 }
+message Test {
+required uint32 id=1;
+required uint32 id2=2;
+required uint32 id3=3;
+required uint32 id4=4;
+required uint32 id5=5;
+required uint32 id6=6;
+required uint32 id7=7;
+required uint32 id8=8;
+required uint32 id9=9;
+required uint32 id10=10;
+};
+
 /*
 message Repeat {
     required uint32 a=1;
