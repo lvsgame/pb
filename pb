@@ -16,6 +16,8 @@ pb=~/pb CD=. filter="*" {
   test.pb.h
  }
  tool=tool {
+  pathconfig.lua
+  fs.lua
   lfs.so
   lpeg.so
   plp.lua

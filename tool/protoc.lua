@@ -1,29 +1,14 @@
-
+require "pathconfig"
 local args = {...}
 if #args < 3 then
     print("usage: protoc.lua input_dir[.proto] define_dir pb_file")
-    return -1
+    return 1
 end
 
-local lfs = require "lfs"
+local fs = require "fs"
 local plp = require "plp"
 
-function getfiles(path, ext)
-	local files = {}
-	local init = -(#ext)
-	local getattr = lfs.attributes
-	for file in lfs.dir(path) do
-		if file ~= "." and file ~= ".." then
-			local fname = path .. '/' .. file
-			if getattr(fname).mode == "file" and string.find(fname, ext, init, true) then
-				files[#files+1] = fname
-			end
-		end	
-	end
-	return files
-end
-
-local files = getfiles(args[1], ".proto")
+local files = fs.getfiles(args[1], ".proto")
 
 local full_blocktable = {}
 local full_define = {}
@@ -31,7 +16,6 @@ local full_define = {}
 local outdir = args[2]
 
 for _, f in ipairs(files) do
-    print(f)
     local blocktable = plp.block_new()
     assert(plp.parse_file(f, blocktable))
  
@@ -48,8 +32,11 @@ for _, f in ipairs(files) do
 end
 
 local outfile = args[3]
-local _, _, _, outname = string.find(outfile,'(.-)([^\\/]*).h$')
-local out = io.open(outfile, "w")
+local _, _, outdir, outname = string.find(outfile,'(.-)([^\\/]*).h$')
+local tempfile = string.format("%s~%s.h", outdir, outname)
+local out = io.open(tempfile, "w")
 plp.dump_context(full_blocktable, full_define, out, outname)
 out:close()
-
+-- 输出到临时文件，保证outfile生成后必定完整
+os.rename(tempfile, outfile)
+return 0

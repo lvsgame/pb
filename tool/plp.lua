@@ -56,6 +56,8 @@ local function getmfield(value)
 	local fields = block_cache[#block_cache].fields
     fields[#fields].sign = "mfield"
 	fields[#fields+1] = _new_field() -- next field
+    fields[#fields].order = #fields
+    
 end
 local function getefield(value)
     print('\tparse get enum field : ' .. value)
@@ -69,6 +71,7 @@ local function getblock(sign, name)
     print('parse begin ' .. sign .. ' -> ' .. name)
     local block = _new_block(sign, name)
     block.fields[1] = _new_field() -- for first field
+    block.fields[1].order = 1
     block_cache[#block_cache+1] = block
 end
 local function endblock(sign)
@@ -92,6 +95,13 @@ end
 local function endenum(value)
     endblock("enum")
 end
+local function getenum_unname(name)
+    getblock("enum", "");
+end
+local function getenum_name(name)
+    local fields = block_cache[#block_cache].fields
+    fields[#fields].name=name 
+end
 
 -- import
 local function getimport(name)
@@ -103,6 +113,11 @@ end
 local function getblock_comment(value)
     --print('parse get comment : ' .. value)
     block_cache[#block_cache+1] = _new_block("comment", value)
+end
+
+-- pragma pack
+local function getblock_pack(value)
+    block_cache[#block_cache+1] = _new_block("pragma pack", value)
 end
 
 -----------------------------------------------------------------------------------
@@ -121,6 +136,7 @@ local var_name = (head_char * (head_char+digit)^0)
 local scomment = lpeg.P("//")*(1-lpeg.S("\n"))^0*lpeg.S("\n")
 local mcomment = lpeg.P("/*")*(1-(lpeg.P("/*")+lpeg.P("*/")))^0*lpeg.P("*/")
 local comment = blocksplit^0*(scomment+mcomment)*blocksplit^0 + blocksplit
+local expr = (empty * lpeg.S("+-")^-1 * empty * (digit^1 + var_name))^1
 
 -- field pattern
 local field_label = (lpeg.P("required") + "optional" + "repeated") / getfield_label
@@ -130,25 +146,25 @@ local field_order = (digit^1)/getfield_order
 local field_value = (digit^1)/getfield_value
 local field_comment = comment/getfield_comment
 local fix_repeat = lpeg.P("[") * 
-        empty*((digit^1)/getfield_fixrepeat) *
+        empty*(expr/getfield_fixrepeat) *
         empty*lpeg.P("]")
 local var_repeat = lpeg.P("[") *
         empty*lpeg.P("max") *
         empty*lpeg.P("=") *
-        empty*((digit^1)/getfield_varrepeat) *
+        empty*(expr/getfield_varrepeat) *
         empty*lpeg.P("]")
 local field = field_label * 
 		empty * field_type * 
 		empty * field_name *
         empty * ((fix_repeat^-1))*
-		empty * "=" *
+	    empty * "=" *
 		empty * field_order *
 		empty * lpeg.P(";")
-local field2 = field_label * 
+local field2 = field_label^-1 * 
 		empty * field_type * 
 		empty * field_name *
         empty * ((var_repeat^-1))*
-		empty * "=" *
+	    empty * "=" *
 		empty * field_order *
 		empty * lpeg.P(";")
 
@@ -158,19 +174,27 @@ local field_line = (field+field2)/getmfield + field_comment
 local enum_value = lpeg.P("=")*empty*((digit^1 + var_name)/getfield_value)
 local fenum = field_name * 
 		empty * enum_value^-1 *
-		empty * lpeg.P(";")
+		empty * (lpeg.P(";") + lpeg.P(","))
 local fenum_line = fenum/getefield + field_comment
 		
 
 local block_name = var_name
 local block_comment = comment/getblock_comment
-local message = (lpeg.P("message") * blank * (block_name/getmessage) * blocksplit *
+local message = ((lpeg.P("message")+lpeg.P("struct")) * blank * (block_name/getmessage) * blocksplit *
 				"{" * field_line^1 * "}" * lpeg.P(";")^0)/endmessage
-local enum = (lpeg.P("enum") * blank * (block_name/getenum) * blocksplit *
-			 "{" * fenum_line^1 * "}" * lpeg.P(";")^0)/endenum
-local import = lpeg.P("import") * blank * (block_name/getimport)
+local enum = (lpeg.P("enum")* blank * (block_name/getenum) * blocksplit *
+		"{" * fenum_line^1 * "}" * lpeg.P(";")^0)/endenum
+local enum_uname = (lpeg.P("enum")/getenum_unname* 
+        (blank * block_name/getenum_name)^-1 * blocksplit *
+		"{" * fenum_line^1 * "}" * lpeg.P(";")^0)/endenum
 
-local block = block_comment+import+message+enum
+local import = lpeg.P("import") * blank * (block_name/getimport)
+local pack = lpeg.P("#pragma") * blank * lpeg.P("pack") * 
+        empty * lpeg.P("(") * 
+        empty * digit^-1 * 
+        empty * lpeg.P(")")
+local block_pack = pack/getblock_pack
+local block = block_comment+import+message+enum + enum_uname + block_pack
 
 -------------------------------------------------------------------------------
 -- serialize
@@ -202,12 +226,12 @@ _LABELS = {
 }
 
 local function _dump_instruction()
-    io.write('/*this file is generate by protoc.lua do not change it by hand*/\n\n')
+    io.write('/*this file is generate by protoc.lua do not change it by hand*/\n')
 end
 
 local function _dump_h_header(outname)
     io.write(string.format("#ifndef __%s_H__\n", string.upper(outname)))
-    io.write(string.format("#define __%s_H__\n\n", string.upper(outname)))
+    io.write(string.format("#define __%s_H__\n", string.upper(outname)))
 end
 
 local function _dump_h_tail()
@@ -246,7 +270,8 @@ local function _dump_block(blocktable, name)
     for _, block in ipairs(blocktable) do
         if block.sign == "import" then
             io.write(string.format('#include "%s.pb.h"', block.name))
-        elseif block.sign == "comment" then
+        elseif block.sign == "comment" or
+               block.sign == "pragma pack" then
             io.write(string.format(block.name))
         elseif block.sign == "message" then
             io.write(string.format("struct %s {", block.name))
@@ -304,7 +329,7 @@ local function _serialize_field_decl(mname, field, blocktable)
     end
 
     local label = _LABELS[field.label]
-    assert(label, string.format("%s::%s invalid label:%s", mname, field.name, field.label))
+    assert(label, string.format("%s::%s unknown label:%s", mname, field.name, field.label))
     local ftype = string.format("%s%s", label, field.type)
     
     return string.format('"%s", %s, offsetof(struct %s, %s), %s, %s, %s, "%s"', 
@@ -366,7 +391,6 @@ local function _dump_includes(defines)
     for _, def in ipairs(defines) do
         io.write(string.format('#include "%s.pb.h"\n', def))
     end
-    io.write("\n")
 end
 local function _dump_pbobject_decl(blocktable)
     for _, b in ipairs(blocktable) do
@@ -374,7 +398,6 @@ local function _dump_pbobject_decl(blocktable)
             io.write(string.format("struct pb_object* %s = NULL;\n", _pbo_name(b.name)))
         end
     end
-    io.write("\n")
 end
 local function _dump_context(blocktable, defines, outname) 
     _dump_instruction()
