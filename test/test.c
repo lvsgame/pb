@@ -51,7 +51,7 @@ void test_pb() {
         printf("seri error: %s", pb_context_lasterror(pbc));
         return;
     }
-    printf("seri size: %lu -> %zu\n", sizeof(h), s.cur-s.pointer);
+    printf("seri size: %zu -> %u\n", sizeof(h), s.cur-s.pointer);
 
     struct Hero h2;
     memset(&h2, 0, sizeof(h2));
@@ -113,8 +113,8 @@ void benchmark(int times) {
         }
     }
     uint64_t t2 = _time();
-    printf("seri times=%d, time=%lu, size: %lu -> %zu\n", 
-            times, t2-t1, sizeof(h), s.cur-s.pointer);
+    printf("seri times=%d, time=%d, size: %d -> %d\n", 
+            times, (int)(t2-t1), c.size, s.cur-s.pointer);
 
     struct Hero h2;
     t1 = _time();
@@ -130,8 +130,8 @@ void benchmark(int times) {
         }
     }
     t2 = _time();
-    printf("unseri times=%d, time=%lu, size: %lu -> %zu\n", 
-            times, t2-t1, s.cur-s.pointer, sizeof(h2));
+    printf("unseri times=%d, time=%d, size: %d -> %d\n", 
+            times, (int)(t2-t1), s.cur-s.pointer, c2.size);
 
     assert(c.size == c2.size);
     assert(memcmp(&h, &h2, sizeof(h)) == 0);
@@ -148,7 +148,7 @@ void benchmark(int times) {
         h2.equip = h.equip;
     }
     t2 = _time();
-    printf("memcpy times=%d, time=%lu\n", times, t2-t1);
+    printf("memcpy times=%d, time=%d\n", times, (int)(t2-t1));
 
     struct Test test;
     memset(&test, 0, sizeof(test));
@@ -177,8 +177,8 @@ void benchmark(int times) {
         }
     }
     t2 = _time();
-    printf("test seri times=%d, time=%lu, size: %lu -> %zu\n", 
-            times, t2-t1, sizeof(test), s.cur-s.pointer);
+    printf("test seri times=%d, time=%d, size: %d -> %d\n", 
+            times, (int)(t2-t1), sizeof(test), s.cur-s.pointer);
 
     struct Test test2;
     memset(&test2, 0, sizeof(test2));
@@ -194,8 +194,8 @@ void benchmark(int times) {
         }
     }
     t2 = _time();
-    printf("test unseri times=%d, time=%lu, size: %zu -> %lu\n", 
-            times, t2-t1, s.cur-s.pointer, sizeof(test2));
+    printf("test unseri times=%d, time=%d, size: %d -> %d\n", 
+            times, (int)(t2-t1), s.cur-s.pointer, sizeof(test2));
     assert(memcmp(&test, &test2, sizeof(test)) == 0);
     pb_context_delete(pbc);
 

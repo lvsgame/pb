@@ -1,4 +1,3 @@
-
 // hero attribute
 message Attribute {
     required uint32 hp = 1;

@@ -13,13 +13,10 @@ pb=~/pb CD=. filter="*" {
   test.c
   test.proto
   pb_log.h
-  test.pb.h
  }
  tool=tool {
-  pathconfig.lua
   fs.lua
-  lfs.so
-  lpeg.so
+  pathconfig.lua
   plp.lua
   protoc.lua
  }

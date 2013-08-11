@@ -1,7 +1,7 @@
 require "pathconfig"
 local args = {...}
 if #args < 3 then
-    print("usage: protoc.lua input_dir[.proto] define_dir pb_file")
+    print("usage: protoc.lua input_dir[.proto] out_dir pbinit_file")
     return 1
 end
 
@@ -10,33 +10,27 @@ local plp = require "plp"
 
 local files = fs.getfiles(args[1], ".proto")
 
-local full_blocktable = {}
-local full_define = {}
-
+local protos = {}
 local outdir = args[2]
+local pbinit_file = args[3]
 
 for _, f in ipairs(files) do
-    local blocktable = plp.block_new()
-    assert(plp.parse_file(f, blocktable))
+    local _, _, _, protoname = string.find(f,'(.-)([^\\/]*).proto$')
+    local proto = plp.parse_file(f, protoname)
  
-    local _, _, _, define = string.find(f,'(.-)([^\\/]*).proto$')
-    outfile = string.format("%s/%s.pb.h", outdir, define)
+    local outfile = string.format("%s/%s.pb.h", outdir, protoname)
     local out = io.open(outfile, "w")
-    plp.dump(blocktable, define, out) 
+    plp.dump_proto(proto, out) 
     out:close()
 
-    for _, b in ipairs(blocktable) do
-        full_blocktable[#full_blocktable+1] = b
-    end
-    full_define[#full_define+1] = define
+    protos[#protos+1] = proto
 end
 
-local outfile = args[3]
-local _, _, outdir, outname = string.find(outfile,'(.-)([^\\/]*).h$')
+local _, _, outdir, outname = string.find(pbinit_file,'(.-)([^\\/]*).h$')
 local tempfile = string.format("%s~%s.h", outdir, outname)
 local out = io.open(tempfile, "w")
-plp.dump_context(full_blocktable, full_define, out, outname)
+plp.dump_context(protos, out, outname)
 out:close()
--- 输出到临时文件，保证outfile生成后必定完整
-os.rename(tempfile, outfile)
+-- 输出到临时文件，保证pbinit_file生成后必定完整
+os.rename(tempfile, pbinit_file)
 return 0

@@ -1,200 +1,124 @@
--------------------------------------------------------------------------------------
--- plp
--------------------------------------------------------------------------------------
+local lpeg = require "lpeg"
 
--- all part of field
-local function getfield_label(value)
-	local fields = block_cache[#block_cache].fields
-	fields[#fields].label = value
-end
-local function getfield_type(value)
-	local fields = block_cache[#block_cache].fields
-	fields[#fields].type = value
-end
-local function getfield_name(value)
-	local fields = block_cache[#block_cache].fields
-	fields[#fields].name = value
-end
-local function getfield_order(value)
-	local fields = block_cache[#block_cache].fields
-	fields[#fields].order = value
-end
-local function getfield_value(value)
-	local fields = block_cache[#block_cache].fields
-	fields[#fields].value = value
-end
-local function getfield_fixrepeat(value)
-	local fields = block_cache[#block_cache].fields
-	fields[#fields].fixrepeat = value
-end
-local function getfield_varrepeat(value)
-	local fields = block_cache[#block_cache].fields
-	fields[#fields].varrepeat = value
-end
+local tinsert = table.insert
+local sfind = string.find
+local ssub = string.sub
+local sfmt = string.format
+local supper = string.upper
+local smatch = string.match
+local srep = string.rep
+local P = lpeg.P
+local S = lpeg.S
+local R = lpeg.R
+local C = lpeg.C
+local Cc = lpeg.Cc
+local Cs = lpeg.Cs
+local Cg = lpeg.Cg
+local Ct = lpeg.Ct
+local Cmt = lpeg.Cmt
+local Carg = lpeg.Carg
 
-local function _new_field()
-    return { sign="", label="", type="", name="", value="", order="", fixrepeat="", varrepeat=""}
+local function _MC(pattern)
+    return Cmt(C(pattern) * Carg(1), 
+        function (_, pos, pattern, context)
+            if pos > context.pos then 
+                context.pos = pos 
+            end 
+            return true
+        end)
 end
+local function _M(pattern)
+    return Cmt(pattern * Carg(1), 
+        function (_, pos, context)
+            if pos > context.pos then 
+                context.pos = pos 
+            end 
+            return true
+        end)
+end
+local _MLine = Cmt((P("\n") + "\r\n") * Carg(1), 
+        function (_, pos, context)
+            if pos > context.pos then
+                context.pos = pos
+                context.line = context.line + 1
+                context.line_pos = pos
+            end
+            return true
+        end)
 
-local function _new_block(sign, name)
-    -- type: message enum comment import
-    return { sign=sign, name=name, fields={}}
-end
+local _MError = Cmt(Carg(1), function (buffer, pos, context)
+        local err_line = ssub(buffer, context.line_pos, 
+                sfind(buffer, "\n", context.line_pos))
+        local pos = context.pos - context.line_pos
+        err_line = sfmt("%s`%s", ssub(err_line, 1, pos), ssub(err_line, pos+1))
+        error(sfmt("syntax error [%s:%d:%d]%s", 
+            context.file, context.line, pos+1, err_line))
+        end)
 
--- comment field
-local function getfield_comment(value)
-    --print('\tparse get comment : ' .. value)
-    local fields = block_cache[#block_cache].fields
-	fields[#fields].sign = "comment"
-    fields[#fields].value = value
-    fields[#fields+1] = _new_field() -- next field
-end
-
--- field
-local function getmfield(value)
-    print('\tparse get message field : ' .. value)
-	local fields = block_cache[#block_cache].fields
-    fields[#fields].sign = "mfield"
-	fields[#fields+1] = _new_field() -- next field
-    fields[#fields].order = #fields
-    
-end
-local function getefield(value)
-    print('\tparse get enum field : ' .. value)
-	local fields = block_cache[#block_cache].fields
-    fields[#fields].sign = "efield"
-	fields[#fields+1] = _new_field() -- next field
-end
-
--- block
-local function getblock(sign, name)
-    print('parse begin ' .. sign .. ' -> ' .. name)
-    local block = _new_block(sign, name)
-    block.fields[1] = _new_field() -- for first field
-    block.fields[1].order = 1
-    block_cache[#block_cache+1] = block
-end
-local function endblock(sign)
-    print('parse end ' .. sign)
-    local fields = block_cache[#block_cache].fields
-    fields[#fields] = nil
-end
-
--- message
-local function getmessage(name)
-    getblock("message", name);
-end
-local function endmessage(value)
-    endblock("message")
-end
-
--- enum
-local function getenum(name)
-    getblock("enum", name);
-end
-local function endenum(value)
-    endblock("enum")
-end
-local function getenum_unname(name)
-    getblock("enum", "");
-end
-local function getenum_name(name)
-    local fields = block_cache[#block_cache].fields
-    fields[#fields].name=name 
-end
-
--- import
-local function getimport(name)
-    print('parse get import : ' .. name)
-    block_cache[#block_cache+1] = _new_block("import", name)
-end
-
--- comment
-local function getblock_comment(value)
-    --print('parse get comment : ' .. value)
-    block_cache[#block_cache+1] = _new_block("comment", value)
-end
-
--- pragma pack
-local function getblock_pack(value)
-    block_cache[#block_cache+1] = _new_block("pragma pack", value)
-end
-
------------------------------------------------------------------------------------
--- lpeg
------------------------------------------------------------------------------------
-local lpeg = require"lpeg"
-
--- common pattern
-local blank = (lpeg.P(" ")+lpeg.P("\t"))^1
+local blank = S(" \t") + _MLine
+local blanks = blank^1
 local empty = blank^0
-local blocksplit = (blank+lpeg.P("\n"))^1
-local alpha = lpeg.R("az", "AZ")
-local digit = lpeg.R("09")
-local head_char = alpha + lpeg.S("_")
-local var_name = (head_char * (head_char+digit)^0)
-local scomment = lpeg.P("//")*(1-lpeg.S("\n"))^0*lpeg.S("\n")
-local mcomment = lpeg.P("/*")*(1-(lpeg.P("/*")+lpeg.P("*/")))^0*lpeg.P("*/")
-local comment = blocksplit^0*(scomment+mcomment)*blocksplit^0 + blocksplit
-local expr = (empty * lpeg.S("+-")^-1 * empty * (digit^1 + var_name))^1
+local digit = R("09")
+local alpha = R("az", "AZ")
+local varname = (alpha + "_") * (alpha + "_" + digit)^0
 
--- field pattern
-local field_label = (lpeg.P("required") + "optional" + "repeated") / getfield_label
-local field_type = var_name/getfield_type
-local field_name = var_name/getfield_name
-local field_order = (digit^1)/getfield_order
-local field_value = (digit^1)/getfield_value
-local field_comment = comment/getfield_comment
-local fix_repeat = lpeg.P("[") * 
-        empty*(expr/getfield_fixrepeat) *
-        empty*lpeg.P("]")
-local var_repeat = lpeg.P("[") *
-        empty*lpeg.P("max") *
-        empty*lpeg.P("=") *
-        empty*(expr/getfield_varrepeat) *
-        empty*lpeg.P("]")
-local field = field_label * 
-		empty * field_type * 
-		empty * field_name *
-        empty * ((fix_repeat^-1))*
-	    empty * "=" *
-		empty * field_order *
-		empty * lpeg.P(";")
-local field2 = field_label^-1 * 
-		empty * field_type * 
-		empty * field_name *
-        empty * ((var_repeat^-1))*
-	    empty * "=" *
-		empty * field_order *
-		empty * lpeg.P(";")
+local scomment = P("//") * (1 - _MLine)^0 * _MLine
+local mcomment = P("/*") * (1 - (P("/*")+"*/"))^0 * P("*/")
+local comment = scomment + mcomment + blanks
 
-local field_line = (field+field2)/getmfield + field_comment
+local label = P("required") + "optional" + "repeated"
+local ptype = varname
+local number = digit^1
 
--- fenum pattern
-local enum_value = lpeg.P("=")*empty*((digit^1 + var_name)/getfield_value)
-local fenum = field_name * 
-		empty * enum_value^-1 *
-		empty * (lpeg.P(";") + lpeg.P(","))
-local fenum_line = fenum/getefield + field_comment
-		
+local expression = (empty * _M(S("+-"))^-1 * 
+    empty * (digit^1 + varname))^1
 
-local block_name = var_name
-local block_comment = comment/getblock_comment
-local message = ((lpeg.P("message")+lpeg.P("struct")) * blank * (block_name/getmessage) * blocksplit *
-				"{" * field_line^1 * "}" * lpeg.P(";")^0)/endmessage
-local enum = (lpeg.P("enum")* blank * (block_name/getenum) * blocksplit *
-		"{" * fenum_line^1 * "}" * lpeg.P(";")^0)/endenum
-local enum_uname = (lpeg.P("enum")/getenum_unname* 
-        (blank * block_name/getenum_name)^-1 * blocksplit *
-		"{" * fenum_line^1 * "}" * lpeg.P(";")^0)/endenum
+local repeat_expression = _M("[") * empty *
+    (_M("max") * empty * _M("=") * empty * 
+     Cg(Cc(true), "repeatc_isvar") + 
+     Cg(Cc(false), "repeatc_isvar")) *
+    Cg(_MC(expression), "repeatc") * empty * _M("]")
 
-local import = lpeg.P("import") * blank * (block_name/getimport)
-local pack = lpeg.P("#pragma") * blank * lpeg.P("pack") * 
-        empty * lpeg.P("(") * 
-        empty * digit^-1 * 
-        empty * lpeg.P(")")
-local block_pack = pack/getblock_pack
-local block = block_comment+import+message+enum + enum_uname + block_pack
+local comment = Ct(
+    Cg(Cc("comment"), "sign") *
+    Cg(_MC(scomment + mcomment + blanks), "value"))
+
+local message_field = Ct(
+    Cg(Cc("message_field"), "sign") *
+    Cg(_MC(label), "label") * blanks * 
+    Cg(_MC(varname), "type") * blanks * 
+    Cg(_MC(varname), "name") * empty * 
+    repeat_expression^0 * empty * _M("=") * empty * 
+    Cg(_MC(number), "number") * empty * _M(";"))
+
+local enum_field = Ct(
+    Cg(Cc("enum_field"), "sign") *
+    Cg(_MC(varname), "name") * empty * 
+   (_M("=") * empty *
+    Cg(_MC((digit^1 + varname)), "value") * empty)^-1 * _M(S(",;")))
+
+local message = Ct(
+    Cg(_MC("message"), "sign") * blanks * 
+    Cg(_MC(varname), "name") * empty * _M("{") *
+    Cg(Ct((message_field + comment)^0), "fields") * empty * 
+    _M("}") * _M(S(";"))^0)
+
+local enum = Ct(
+    Cg(_MC("enum"), "sign") * blanks *
+    Cg(_MC(varname), "name") * empty * _M("{") *
+    Cg(Ct((enum_field + comment)^0), "fields") * empty *
+    _M("}") * _M(S(";"))^0)
+
+local import = Ct(
+    Cg(_MC("import"), "sign") * blanks *
+    Cg(_MC(varname), "value"))
+
+local pragma = Ct(
+    Cg(Cc("pragma"), "sign") *
+    Cg(_M("#pragma") * blanks * _M("pack") * empty * 
+       _M("(") * empty * _M(digit^-1) * empty * _M(")"), "value"))
+
+local pattern = Ct((import + message + enum + comment + pragma)^0)
 
 -------------------------------------------------------------------------------
 -- serialize
@@ -225,234 +149,206 @@ _LABELS = {
     ["repeated"] = "R",
 }
 
-local function _dump_instruction()
-    io.write('/*this file is generate by protoc.lua do not change it by hand*/\n')
+local function _dump_instruction(t)
+    tinsert(t, '/*this file is generate by protoc.lua do not change it by hand*/\n')
 end
 
-local function _dump_h_header(outname)
-    io.write(string.format("#ifndef __%s_H__\n", string.upper(outname)))
-    io.write(string.format("#define __%s_H__\n", string.upper(outname)))
+local function _dump_h_header(outname, t)
+    tinsert(t, sfmt("#ifndef __%s_H__\n", outname))
+    tinsert(t, sfmt("#define __%s_H__\n", outname))
 end
 
-local function _dump_h_tail()
-    io.write(string.format("#endif"))
+local function _dump_h_tail(t)
+    tinsert(t, "#endif")
 end
 
-local function _dump_field(field) 
-    if field.sign == "comment" then
-        io.write(field.value)
-    elseif field.sign == "mfield" then
-        local rep = ""
-        if field.fixrepeat ~= "" then 
-            rep = string.format("[%s]", field.fixrepeat)
-        elseif field.varrepeat ~= "" then
-            io.write(string.format("uint16_t n%s;\n    ", field.name));
-            rep = string.format("[%s]", field.varrepeat)
+local function _dump_field(f, t) 
+    if f.sign == "message_field" then
+        if f.repeatc_isvar then
+            tinsert(t, sfmt("uint16_t n%s;\n    ", f.name))
         end
-        local ftype = _TYPES[field.type]
-        if not ftype then
-            ftype = "struct " .. field.type
-        end
-        io.write(string.format("%s %s%s;", ftype, field.name, rep))
-    elseif field.sign == "efield" then
-        local value = ""
-        if field.value ~= "" then
-            value = string.format(" = %s", field.value)
-        end
-        io.write(string.format("%s%s,", field.name, value))
+        local repeatc = f.repeatc and sfmt("[%s]", f.repeatc) or ""
+        local ftype = _TYPES[f.type] or ("struct " .. f.type)
+        tinsert(t, sfmt("%s %s%s;", ftype, f.name, repeatc))
+    elseif f.sign == "enum_field" then
+        local value = f.value and " = " .. f.value or ""
+        tinsert(t, f.name .. value .. ",")
+    else
+        tinsert(t, f.value)
     end
 end
 
-local function _dump_block(blocktable, name) 
-    _dump_instruction()
-    _dump_h_header(string.format(string.upper(name).."_PB"))
-    io.write('#include <stdint.h>\n\n')
-    for _, block in ipairs(blocktable) do
-        if block.sign == "import" then
-            io.write(string.format('#include "%s.pb.h"', block.name))
-        elseif block.sign == "comment" or
-               block.sign == "pragma pack" then
-            io.write(string.format(block.name))
-        elseif block.sign == "message" then
-            io.write(string.format("struct %s {", block.name))
-            for _, field in ipairs(block.fields) do
-                _dump_field(field)
+local function _dump_proto(proto, t) 
+    _dump_instruction(t)
+    _dump_h_header(sfmt(supper(proto.name).."_PB"), t)
+    tinsert(t, '#include <stdint.h>\n')
+    for _, b in ipairs(proto) do
+        if b.sign == "import" then
+            tinsert(t, sfmt('#include "%s.pb.h"', b.value))
+        elseif b.sign == "message" then
+            tinsert(t, sfmt("struct %s {", b.name))
+            for _, f in ipairs(b.fields) do
+                _dump_field(f, t)
             end
-            io.write("};")
-        elseif block.sign == "enum" then
-            io.write(string.format("enum %s {", block.name))
-            for _, field in ipairs(block.fields) do
-                _dump_field(field)
+            tinsert(t, "};")
+        elseif b.sign == "enum" then
+            tinsert(t, sfmt("enum %s {", b.name))
+            for _, f in ipairs(b.fields) do
+                _dump_field(f, t)
             end
-            io.write("};")
+            tinsert(t, "};")
+        else
+            tinsert(t, b.value)
         end
     end
-    _dump_h_tail()
+    _dump_h_tail(t)
 end
 
-local function _serialize_field_decl(mname, field, blocktable) 
-    local order = string.match(field.order, "%d+")+0
-    assert(order > 0 and order <= 4096, 
-        string.format("%s::%s number must be 1~4096", mname, field.name))
+local function _ismessage(typename, messages)
+    for _, m in ipairs(messages) do
+        if m.name == typename then
+            return true
+        end
+    end
+end
 
-    local base_type = not (not _TYPES[field.type]) 
-    if not base_type then
-        local msg_type = false
-        for _, b in ipairs(blocktable) do
-            if b.sign == "message" then
-                if b.name == field.type then
-                    msg_type = true
-                    break
-                end
+local function _verify_label(f, m)
+    assert(_LABELS[f.label], 
+        sfmt("%s::%s unknown label#%s", m.name, f.name, f.label))
+    assert((not f.repeatc_isvar) or (f.repeatc_isvar and f.label == "repeated"), 
+        sfmt("%s::%s label must be repeated", m.name, f.name))
+end
+
+local function _verify_type(f, m, messages)
+    local typename = _TYPES[f.type]
+    if not typename then
+        if _ismessage(f.type, messages) then
+            f.usertype = true
+        else
+            error(sfmt("%s::%s unknown type#%s", m.name, f.name, f.type))
+        end
+    end
+end
+
+local function _verify_number(f, m)
+    local number = smatch(f.number, "%d+") + 0
+    assert(number >= 1 and number <= 4096, 
+        sfmt("%s::%s number must be 1~4096", m.name, f.name))
+end
+
+local function _verify(messages)
+    for _, m in ipairs(messages) do
+        for _, f in ipairs(m.fields) do
+            if f.sign == "message_field" then
+                _verify_label(f, m)
+                _verify_type(f, m, messages)
+                _verify_number(f, m)
             end
         end
-        assert(msg_type, string.format("%s unknown field type:%s", mname, field.type))
     end
-    
-    local bytes = "0"
-    if not base_type then
-        bytes = string.format("sizeof(struct %s)", field.type)
-    end
-   
-    local repeat_max = "0"
-    local repeat_offset = "0"
-    if field.fixrepeat ~= "" then
-        repeat_max = field.fixrepeat
-    end
-    if field.varrepeat ~= "" then
-        assert(field.label == "repeated", 
-            string.format("%s::%s label must be repeated", mname, field.name))
-        local align = string.rep(" ", 9)
-        repeat_offset = string.format("\n%soffsetof(struct %s, %s) - offsetof(struct %s, n%s)",
-            align, mname, field.name, mname, field.name)
-        repeat_max = field.varrepeat
-    end
-
-    local label = _LABELS[field.label]
-    assert(label, string.format("%s::%s unknown label:%s", mname, field.name, field.label))
-    local ftype = string.format("%s%s", label, field.type)
-    
-    return string.format('"%s", %s, offsetof(struct %s, %s), %s, %s, %s, "%s"', 
-        field.name, field.order, mname, field.name, bytes, repeat_max, repeat_offset, ftype)
 end
 
-local function _dump_mfields(m, blocktable)
-    for _, field in ipairs(m.fields) do
-        if field.sign == "mfield" then
-            io.write(string.format(
-            "        {%s},\n", _serialize_field_decl(m.name, field, blocktable)))
+local function _dump_message_field_decls(m, t)
+    for _, f in ipairs(m.fields) do
+        if f.sign == "message_field" then
+            tinsert(t, sfmt(
+                '        {"%s", %s, offsetof(struct %s, %s), %s, %s, %s, "%s%s"},\n', 
+                f.name, 
+                f.number, 
+                m.name, 
+                f.name, 
+                f.usertype and sfmt("sizeof(struct %s)", f.type) or "0",
+                f.repeatc and f.repeatc or "0",
+                f.repeatc_isvar and sfmt(
+                    "\n         offsetof(struct %s, %s) - offsetof(struct %s, n%s)",
+                                        m.name, 
+                                        f.name, 
+                                        m.name, 
+                                        f.name) or "0",
+                _LABELS[f.label], 
+                f.type))
         end
     end
 end
 
 local function _pbo_name(name)
-    return string.format("PBO_%s", string.upper(name))
+    return sfmt("PBO_%s", supper(name))
 end
 
-local function _dump_message(m, n, blocktable)
-    io.write(string.format(
-             "    struct pb_field_decl fds%d[] = {\n", n))
-    _dump_mfields(m, blocktable)
-    io.write("    };\n")
-    io.write(string.format(
+local function _dump_message(m, i, t)
+    tinsert(t, sfmt(
+             "    struct pb_field_decl fds%d[] = {\n", i))
+    _dump_message_field_decls(m, t)
+    tinsert(t, "    };\n")
+    tinsert(t, sfmt(
              '    %s = pb_context_object(pbc, "%s", fds%d, sizeof(fds%d)/sizeof(fds%d[0]));\n', 
-                                              _pbo_name(m.name), m.name, n, n, n))
-    io.write(string.format(
+                                              _pbo_name(m.name), m.name, i, i, i))
+    tinsert(t, sfmt(
             "    if (%s == NULL) {\n", _pbo_name(m.name)))
-    io.write('        PB_LOG("pb object error: %s", pb_context_lasterror(pbc));\n')
-    io.write("        pb_context_delete(pbc);\n")
-    io.write("        return NULL;\n")
-    io.write("    }\n\n")
+    tinsert(t, '        PB_LOG("pb object error: %s", pb_context_lasterror(pbc));\n')
+    tinsert(t, "        pb_context_delete(pbc);\n")
+    tinsert(t, "        return NULL;\n")
+    tinsert(t, "    }\n\n")
 end
 
-local function _dump_messages(blocktable)
+local function _dump_messages(messages, t)
     local i = 1 
-    for _, b in ipairs(blocktable) do
-        if b.sign == "message" then
-            _dump_message(b, i, blocktable)
-            i = i+1
-        end
+    for _, m in ipairs(messages) do
+        _dump_message(m, i, t)
+        i = i+1
     end
 end
 
-local function _get_messagecount(blocktable)
-    local nmessage = 0;
-    for _, block in ipairs(blocktable) do
-        if block.sign == "message" then
-            nmessage = nmessage + 1
+local function _get_messages(protos)
+    local messages = {}
+    for _, proto in ipairs(protos) do
+        for _, b in ipairs(proto) do
+            if b.sign == "message" then
+                messages[#messages+1] = b
+            end
         end
     end
-    return nmessage
-end
-local function _dump_includes(defines)
-    io.write('#include <stddef.h>\n')
-    io.write('#include "pb.h"\n')
-    io.write('#include "pb_log.h"\n')
-    for _, def in ipairs(defines) do
-        io.write(string.format('#include "%s.pb.h"\n', def))
-    end
-end
-local function _dump_pbobject_decl(blocktable)
-    for _, b in ipairs(blocktable) do
-        if b.sign == "message" then
-            io.write(string.format("struct pb_object* %s = NULL;\n", _pbo_name(b.name)))
-        end
-    end
-end
-local function _dump_context(blocktable, defines, outname) 
-    _dump_instruction()
-    _dump_h_header(outname)
-    _dump_includes(defines)
-    _dump_pbobject_decl(blocktable) 
-    local nmessage = _get_messagecount(blocktable)
-    io.write("struct pb_context*\n")
-    io.write("PB_CONTEXT_INIT() {\n")
-    io.write(string.format(
-             "    struct pb_context* pbc = pb_context_new(%d);\n", nmessage))
-    io.write("    if (pbc == NULL) {\n")
-    io.write("        return NULL;\n")
-    io.write("    }\n")
-    _dump_messages(blocktable)
-    io.write("    pb_context_fresh(pbc);\n");
-    io.write("    if (pb_context_verify(pbc)) {\n");
-    io.write('        PB_LOG("pb verify error: %s", pb_context_lasterror(pbc));\n')
-    io.write("        return NULL;\n")
-    io.write("    }\n")
-    io.write("    return pbc;\n");
-    io.write("}\n\n");
-    _dump_h_tail();
+    return messages;
 end
 
--------------------------------------------------------------------------------
--- locate error
--------------------------------------------------------------------------------
-local function locate_error(content, err_pos)
-    local poses = {}
-    local pos = 0
-    local line = 0
-    repeat
-        local last_pos = pos
-        pos = string.find(content, '\n', pos + 1)
-        line = line + 1
-        if not pos or pos > err_pos then
-            return line, err_pos - last_pos
-        end
-    until not pos
+local function _dump_includes(protos, t)
+    tinsert(t, '#include <stddef.h>\n')
+    tinsert(t, '#include "pb.h"\n')
+    tinsert(t, '#include "pb_log.h"\n')
+    for _, proto in ipairs(protos) do
+        tinsert(t, sfmt('#include "%s.pb.h"\n', proto.name))
+    end
 end
 
-local function show_error(content, err_pos)
-    local row, col = locate_error(content, err_pos)
-    local head = string.format("[cexport error report][row:%d col:%d]", row, col)
-    print(string.rep('#', string.len(head)))
-    print(head)
-    print(string.rep('#', 79))
-    local newline, _ = string.find(content, '\n', err_pos)
-    if newline then
-        print(string.sub(content, err_pos, newline-1))
-    else
-        print(string.sub(content, err_pos))
+local function _dump_pbobject_decl(messages, t)
+    for _, m in ipairs(messages) do
+        tinsert(t, sfmt("struct pb_object* %s = NULL;\n", _pbo_name(m.name)))
     end
-    print(string.rep('#', 79))
+end
+
+local function _dump_context(protos, outname, t)
+    local messages = _get_messages(protos)
+    _verify(messages)
+    _dump_instruction(t)
+    _dump_h_header(supper(outname), t)
+    _dump_includes(protos, t) 
+    _dump_pbobject_decl(messages, t) 
+    tinsert(t, "struct pb_context*\n")
+    tinsert(t, "PB_CONTEXT_INIT() {\n")
+    tinsert(t, sfmt(
+             "    struct pb_context* pbc = pb_context_new(%d);\n", #messages))
+    tinsert(t, "    if (pbc == NULL) {\n")
+    tinsert(t, "        return NULL;\n")
+    tinsert(t, "    }\n")
+    _dump_messages(messages, t)
+    tinsert(t, "    pb_context_fresh(pbc);\n");
+    tinsert(t, "    if (pb_context_verify(pbc)) {\n");
+    tinsert(t, '        PB_LOG("pb verify error: %s", pb_context_lasterror(pbc));\n')
+    tinsert(t, "        return NULL;\n")
+    tinsert(t, "    }\n")
+    tinsert(t, "    return pbc;\n");
+    tinsert(t, "}\n\n");
+    _dump_h_tail(t);
 end
 
 -------------------------------------------------------------------------------
@@ -460,48 +356,45 @@ end
 -------------------------------------------------------------------------------
 local plp = {}
 
-function plp.block_new()
-    return {}
+local function _parse(s, protoname, filename)
+    local context = { file=filename, pos=0, line=1, line_pos=0 }
+    local proto = lpeg.match(pattern * (-1 + _MError), s, 1, context)
+    proto.name = protoname
+    return proto
 end
 
-function plp.parse_string(str, blockout)
-	block_cache = blockout
-	local pos = 1
-    local last_pos
-	while pos do
-        last_pos = pos
-		pos = lpeg.match(block, str, pos)
-    end
-    if last_pos - 1 == string.len(str) then
-        return true
-    else
-        show_error(str, last_pos)
-        return false
-    end
+function plp.parse_string(s, protoname)
+    return _parse(s, protoname, "")
 end
 
-function plp.parse_file(fname, blockout)
-    print(string.format('[parsing file %s]', fname))
-	local file = io.open(fname, "r")
-	local strfile = file:read("*a")
-	file:close()
-	return plp.parse_string(strfile, blockout)
+function plp.parse_file(filename, protoname)
+    print('>> parsing file ' .. filename)
+	local fp = io.open(filename, "r")
+	local s = fp:read("*a")
+	fp:close()
+	return _parse(s, protoname, filename)
 end
 
-function plp.dump(block, name, out)
+function plp.dump_proto(proto, out)
     local old_output = io.output()
     if out then
         io.output(out)
     end
-    _dump_block(block, name)
+    local t = {}
+    _dump_proto(proto, t)
+    io.write(table.concat(t))
     io.output(old_output)
 end
-function plp.dump_context(blocktable, defines, out, outname)
+
+function plp.dump_context(protos, out, outname)
     local old_output = io.output()
     if out then
         io.output(out)
     end
-    _dump_context(blocktable, defines, outname)
+    local t = {}
+    _dump_context(protos, outname, t)
+    io.write(table.concat(t))
     io.output(old_output)
 end
+
 return plp
