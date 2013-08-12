@@ -8,6 +8,7 @@ pb=~/pb CD=. filter="*" {
   array.h
   map.h
   pb.h
+  pb_buffer.h
  }
  test=test {
   test.c

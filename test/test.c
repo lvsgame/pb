@@ -69,7 +69,6 @@ void test_pb() {
 
     printf("pb test ok\n");
     pb_context_delete(pbc);
-
 }
 
 void benchmark(int times) {
@@ -198,7 +197,6 @@ void benchmark(int times) {
             times, (int)(t2-t1), s.cur-s.pointer, sizeof(test2));
     assert(memcmp(&test, &test2, sizeof(test)) == 0);
     pb_context_delete(pbc);
-
 }
 
 int 

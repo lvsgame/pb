@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stddef.h>
 
 #define LABEL_REQUIRED 0
 #define LABEL_OPTIONAL 1
@@ -289,6 +290,7 @@ _unpack_bytes(size_t bytes, struct pb_slice* seri, struct pb_slice* c) {
 }
 
 #define CHECK(f) if (r=f) return r;
+#define READ_ADDRESS(ptr) (char*)*(ptrdiff_t*)(ptr)
 
 inline static int
 _pack_object(struct pb_object* o, struct pb_slice* c, struct pb_slice* seri);
@@ -300,6 +302,7 @@ _pack_lend(struct _field* f, struct pb_slice* c, struct pb_slice* seri) {
         char* repeatptr = c->cur - f->repeat_offset;
         assert(repeatptr >= c->pointer);
         repeat = *(uint16_t*)repeatptr;
+        c->cur = READ_ADDRESS(c->cur);
     } else {
         repeat = f->repeat_max;
     }
@@ -416,9 +419,8 @@ _unpack_lend(struct _field* f, struct pb_slice* seri, struct pb_slice* c) {
     if (_slice_checkforward(seri, 2))
         return PB_ERR_NO_RBUFFER;
 
-    char* repeatptr = c->cur - f->repeat_offset;
-    assert(repeatptr >= c->pointer);
-    
+    char* repeatptr = NULL;
+        
     uint16_t bytes = *(uint16_t*)(seri->cur);
     seri->cur += 2;
 
@@ -427,6 +429,11 @@ _unpack_lend(struct _field* f, struct pb_slice* seri, struct pb_slice* c) {
         return PB_ERR_NO_RBUFFER;
     
     size_t repeat = 0;
+    if (f->repeat_offset > 0) {
+        repeatptr = c->cur - f->repeat_offset;
+        assert(repeatptr >= c->pointer);
+        c->cur = READ_ADDRESS(c->cur);
+    }
 
     switch (f->ctype) {
     case CT_BYTES:
@@ -868,7 +875,6 @@ _verify_object(struct pb_context* pbc, struct pb_object* o, int depth) {
     }
     return 0;
 }
-
 
 static int
 _verify_cb(const char* key, void* value, void* ud) {

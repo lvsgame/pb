@@ -123,7 +123,7 @@ local pattern = Ct((import + message + enum + comment + pragma)^0)
 -------------------------------------------------------------------------------
 -- serialize
 -------------------------------------------------------------------------------
-_TYPES = {
+local _TYPES = {
     ["bool"]    = "bool",
     ["uint8"]   = "uint8_t",
     ["uint16"]  = "uint16_t",
@@ -143,7 +143,7 @@ _TYPES = {
     ["bytes"]   = "uint8_t",
 }
 
-_LABELS = {
+local _LABELS = {
     ["required"] = "Y",
     ["optional"] = "O",
     ["repeated"] = "R",
@@ -163,13 +163,15 @@ local function _dump_h_tail(t)
 end
 
 local function _dump_field(f, t) 
-    if f.sign == "message_field" then
-        if f.repeatc_isvar then
-            tinsert(t, sfmt("uint16_t n%s;\n    ", f.name))
-        end
+    if f.sign == "message_field" then 
         local repeatc = f.repeatc and sfmt("[%s]", f.repeatc) or ""
         local ftype = _TYPES[f.type] or ("struct " .. f.type)
-        tinsert(t, sfmt("%s %s%s;", ftype, f.name, repeatc))
+        if f.repeatc_isvar then
+            tinsert(t, sfmt("uint16_t n%s;\n    ", f.name))
+            tinsert(t, sfmt("%s* %s;", ftype, f.name))
+        else
+            tinsert(t, sfmt("%s %s%s;", ftype, f.name, repeatc))
+        end
     elseif f.sign == "enum_field" then
         local value = f.value and " = " .. f.value or ""
         tinsert(t, f.name .. value .. ",")
